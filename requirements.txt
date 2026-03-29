@@ -1,0 +1,14 @@
+streamlit
+python-dotenv
+langchain
+langgraph
+langchain-community
+langchain-openai
+faiss-cpu
+pydantic
+tiktoken
+pandas
+numpy
+requests
+beautifulsoup4
+lxml
