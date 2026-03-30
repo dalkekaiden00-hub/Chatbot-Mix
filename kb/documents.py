@@ -33,6 +33,7 @@ def build_documents():
             "url": p.get("url"),
             "price": p.get("price"),
             "rating": p.get("rating"),
+            "review_count": p.get("review_count"),
             "category": p.get("category", "mixes"),
             "size": p.get("size"),
         }
