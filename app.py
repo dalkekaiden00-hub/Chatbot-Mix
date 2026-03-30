@@ -367,32 +367,6 @@ if graph_import_error:
 
 left_col, right_col = st.columns([2.2, 1])
 
-with right_col:
-    st.markdown('<div class="side-card">', unsafe_allow_html=True)
-    st.subheader("Workflow Graph")
-    st.graphviz_chart(build_workflow_graph())
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="side-card">', unsafe_allow_html=True)
-    st.markdown("### How it works")
-    st.markdown(
-        """
-        1. **Guardrail** checks whether the question is about King Arthur Baking mixes  
-        2. **Router** chooses:
-           - **SQL** for structured/numeric queries
-           - **RAG** for semantic product help
-        3. **Synthesis** produces the final customer-facing answer
-        """
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="side-card">', unsafe_allow_html=True)
-    st.markdown("### Try asking")
-    q1 = st.button("Which product is good?")
-    q2 = st.button("What are cheapest products?")
-    q3 = st.button("Recommend a gluten-free mix")
-    st.markdown('<div class="small-muted">Click a suggestion to auto-send it.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
 with left_col:
     st.subheader("Chat")
@@ -405,13 +379,6 @@ with left_col:
 
     if "pending_query" not in st.session_state:
         st.session_state.pending_query = None
-
-    if q1:
-        st.session_state.pending_query = "Which product is good?"
-    elif q2:
-        st.session_state.pending_query = "What are cheapest products?"
-    elif q3:
-        st.session_state.pending_query = "Recommend a gluten-free mix"
 
     st.markdown('<div class="chat-shell">', unsafe_allow_html=True)
 
@@ -468,38 +435,77 @@ with left_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+    
+with right_col:
+    st.markdown('<div class="side-card">', unsafe_allow_html=True)
+    st.subheader("Workflow Graph")
+    result = st.session_state.get("last_result", None)
+    
+    if result:
+        route = result.get("route")
+        out_of_scope = result.get("out_of_scope", False)
+        rejected = out_of_scope or route == "reject"
+        st.graphviz_chart(build_workflow_graph(selected_route=route, rejected=rejected))
+    
+    else:
+        st.graphviz_chart(build_workflow_graph())
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="side-card">', unsafe_allow_html=True)
+    st.markdown("### How it works")
+    st.markdown(
+        """
+        1. **Guardrail** checks whether the question is about King Arthur Baking mixes  
+        2. **Router** chooses:
+           - **SQL** for structured/numeric queries
+           - **RAG** for semantic product help
+        3. **Synthesis** produces the final customer-facing answer
+        """
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="side-card">', unsafe_allow_html=True)
+    st.markdown("### Try asking")
+    q1 = st.button("Which product is good?")
+    q2 = st.button("What are cheapest products?")
+    q3 = st.button("Recommend a gluten-free mix")
+    st.markdown('<div class="small-muted">Click a suggestion to auto-send it.</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+
 st.divider()
-st.subheader("Execution View")
+#st.subheader("Execution View")
 
-result = st.session_state.get("last_result", None)
+# result = st.session_state.get("last_result", None)
 
-if result:
-    route = result.get("route")
-    out_of_scope = result.get("out_of_scope", False)
-    rejected = out_of_scope or route == "reject"
+# if result:
+#     route = result.get("route")
+#     out_of_scope = result.get("out_of_scope", False)
+#     rejected = out_of_scope or route == "reject"
 
-    st.graphviz_chart(build_workflow_graph(selected_route=route, rejected=rejected))
+    # st.graphviz_chart(build_workflow_graph(selected_route=route, rejected=rejected))
 
-    with st.expander("Execution Details"):
-        st.write(f"**Route:** `{route}`")
-        st.write(f"**Out of scope:** `{out_of_scope}`")
+    # with st.expander("Execution Details"):
+    #     st.write(f"**Route:** `{route}`")
+    #     st.write(f"**Out of scope:** `{out_of_scope}`")
 
-        if result.get("generated_sql"):
-            st.write("**Generated SQL**")
-            st.code(result["generated_sql"], language="sql")
+    #     if result.get("generated_sql"):
+    #         st.write("**Generated SQL**")
+    #         st.code(result["generated_sql"], language="sql")
 
-        if result.get("sql_result"):
-            st.write("**SQL Result**")
-            st.text(result["sql_result"])
+    #     if result.get("sql_result"):
+    #         st.write("**SQL Result**")
+    #         st.text(result["sql_result"])
 
-        if result.get("rag_result"):
-            st.write("**RAG Result**")
-            st.text(result["rag_result"])
+    #     if result.get("rag_result"):
+    #         st.write("**RAG Result**")
+    #         st.text(result["rag_result"])
 
-        if result.get("retrieved_docs"):
-            st.write("**Retrieved Documents**")
-            for i, doc in enumerate(result["retrieved_docs"], start=1):
-                st.markdown(f"**Doc {i}**")
-                st.json(doc)
-else:
-    st.info("Ask a question to see the executed workflow path.")
+    #     if result.get("retrieved_docs"):
+    #         st.write("**Retrieved Documents**")
+    #         for i, doc in enumerate(result["retrieved_docs"], start=1):
+    #             st.markdown(f"**Doc {i}**")
+    #             st.json(doc)
+# else:
+#     st.info("Ask a question to see the executed workflow path.")
