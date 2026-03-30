@@ -39,22 +39,37 @@ Important conversation rule:
 Schema rules:
 - Query only the products table.
 - Do NOT assume category = 'mixes'.
-- If user refers to product type like bread, cookie, brownie, cake, pancake, muffin, scone, pizza, gluten free, etc., use category filtering and optionally name filtering when helpful.
+
+Text matching rules:
+- Use case-insensitive matching with LOWER(...).
+- For single-word product/category filters like cookie, bread, brownie, cake, muffin, scone, pizza:
+  prefer conditions like:
+  LOWER(category) LIKE '%cookie%' OR LOWER(name) LIKE '%cookie%'
+- For multi-word filters such as "gluten free", "whole wheat", "chocolate chip":
+  do NOT require exact phrase matching only.
+- Instead, match all important words using AND within a field, for example:
+  LOWER(name) LIKE '%gluten%' AND LOWER(name) LIKE '%free%'
+- When relevant, search multi-word filters across category, name, and description.
 
 SQL generation rules:
 - Generate a valid SQLite SELECT query only.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, REPLACE, PRAGMA, ATTACH.
-- Always include these columns in SELECT:
+- If the user is asking for product listings, include:
   id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
-- Use case-insensitive matching with LOWER(...)
-- For category filters, prefer:
-  LOWER(category) LIKE '%cookie%' OR LOWER(name) LIKE '%cookie%'
+- If the user is asking for analytics (count, sum, average, min, max, comparison, difference, grouped stats), return only the columns needed for that analysis, with clear aliases.
+- Use clear aliases such as:
+  COUNT(*) AS count
+  SUM(price) AS total_price
+  AVG(price) AS avg_price
+  MAX(price) AS max_price
+  MIN(price) AS min_price
 - For expensive / most expensive: ORDER BY price DESC
 - For cheapest / lowest price / affordable: ORDER BY price ASC
 - For highest rated / best rated: ORDER BY rating DESC, review_count DESC
 - For lowest rated: ORDER BY rating ASC, review_count DESC
 - For most reviewed / most popular: ORDER BY review_count DESC
-- Use LIMIT 10 unless the user asks for a specific number
+- Use LIMIT 10 only for product listing queries unless the user asks for a specific number
+- Do not add LIMIT for single-value aggregate queries unless explicitly requested
 - Return only SQL, with no explanation and no markdown
 
 Chat history:
@@ -94,7 +109,21 @@ def is_safe_select(sql: str) -> bool:
     return True
 
 
+def is_analytic_sql(sql: str) -> bool:
+    analytic_patterns = [
+        r"\bCOUNT\s*\(",
+        r"\bSUM\s*\(",
+        r"\bAVG\s*\(",
+        r"\bMIN\s*\(",
+        r"\bMAX\s*\(",
+        r"\bGROUP\s+BY\b",
+    ]
+    return any(re.search(pattern, sql, flags=re.IGNORECASE) for pattern in analytic_patterns)
+
+
 def ensure_limit(sql: str) -> str:
+    if is_analytic_sql(sql):
+        return sql
     if re.search(r"\bLIMIT\s+\d+\b", sql, flags=re.IGNORECASE):
         return sql
     return f"{sql} LIMIT 10"
@@ -129,7 +158,8 @@ def extract_category(text: str) -> str | None:
     categories = [
         "bread", "cookie", "cookies", "brownie", "brownies", "cake", "cakes",
         "pancake", "pancakes", "muffin", "muffins", "scone", "scones",
-        "pizza", "waffle", "waffles", "gluten free", "gluten-free"
+        "pizza", "waffle", "waffles", "gluten free", "gluten-free",
+        "whole wheat", "chocolate chip"
     ]
     for cat in categories:
         if cat in text:
@@ -148,7 +178,7 @@ def normalize_category(cat: str | None) -> str | None:
         "muffins": "muffin",
         "scones": "scone",
         "waffles": "waffle",
-        "gluten-free": "gluten free"
+        "gluten-free": "gluten free",
     }
     return mapping.get(cat, cat)
 
@@ -170,6 +200,77 @@ def infer_sort_from_context(question: str, chat_history: str):
     return "rating DESC, review_count DESC"
 
 
+def is_analytic_question(question: str, chat_history: str) -> bool:
+    text = f"{chat_history} {question}".lower()
+
+    analytic_phrases = [
+        "how many",
+        "count",
+        "sum",
+        "total",
+        "average",
+        "avg",
+        "minimum",
+        "maximum",
+        "min",
+        "max",
+        "difference",
+        "compare",
+        "comparison",
+        "group by",
+        "per category",
+        "by category",
+    ]
+    return any(phrase in text for phrase in analytic_phrases)
+
+
+def tokenize_search_phrase(text: str) -> list[str]:
+    text = text.lower().strip()
+    parts = re.split(r"[\s\-_\/]+", text)
+    return [p for p in parts if p]
+
+
+def escape_sql_like(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def build_all_words_match_for_field(field: str, phrase: str) -> str:
+    words = tokenize_search_phrase(phrase)
+    if not words:
+        return "1=1"
+
+    clauses = [
+        f"LOWER({field}) LIKE '%{escape_sql_like(word)}%'"
+        for word in words
+    ]
+    return "(" + " AND ".join(clauses) + ")"
+
+
+def build_all_words_match_for_fields(fields: list[str], phrase: str) -> str:
+    field_clauses = [
+        build_all_words_match_for_field(field, phrase)
+        for field in fields
+    ]
+    return "(" + " OR ".join(field_clauses) + ")"
+
+
+def build_single_word_match(fields: list[str], word: str) -> str:
+    safe_word = escape_sql_like(word.lower())
+    return "(" + " OR ".join(
+        [f"LOWER({field}) LIKE '%{safe_word}%'" for field in fields]
+    ) + ")"
+
+
+def build_category_filter(category: str) -> str:
+    fields_basic = ["category", "name"]
+    fields_extended = ["category", "name", "description"]
+
+    if " " in category or "-" in category:
+        return build_all_words_match_for_fields(fields_extended, category)
+
+    return build_single_word_match(fields_basic, category)
+
+
 def build_fallback_sql(question: str, chat_history: str) -> str:
     limit_n = extract_requested_limit(question, chat_history)
 
@@ -179,18 +280,22 @@ def build_fallback_sql(question: str, chat_history: str) -> str:
 
     order_by = infer_sort_from_context(question, chat_history)
 
+    where_clauses = []
+
+    if category:
+        where_clauses.append(build_category_filter(category))
+
+    if is_analytic_question(question, chat_history):
+        select_clause = "SELECT COUNT(*) AS count FROM products"
+        sql = select_clause
+        if where_clauses:
+            sql += "\nWHERE " + " AND ".join(where_clauses)
+        return sql.strip()
+
     select_clause = """
 SELECT id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
 FROM products
 """.strip()
-
-    where_clauses = []
-
-    if category:
-        cat_value = category.replace("'", "''")
-        where_clauses.append(
-            f"(LOWER(category) LIKE '%{cat_value}%' OR LOWER(name) LIKE '%{cat_value}%')"
-        )
 
     sql = select_clause
 
@@ -203,10 +308,26 @@ FROM products
     return sql.strip()
 
 
-def format_rows(rows):
-    if not rows:
-        return "No matching products found."
+def is_product_row(row: dict) -> bool:
+    if not isinstance(row, dict) or not row:
+        return False
 
+    product_indicators = {
+        "id", "name", "url", "price", "description",
+        "ingredients", "size", "rating", "review",
+        "review_count", "image_url", "category"
+    }
+    matched = product_indicators.intersection(set(row.keys()))
+    return len(matched) >= 3
+
+
+def is_product_result(rows: list[dict]) -> bool:
+    if not rows:
+        return False
+    return all(is_product_row(row) for row in rows)
+
+
+def format_product_rows(rows: list[dict]) -> str:
     formatted = []
     for row in rows:
         formatted.append(
@@ -220,6 +341,24 @@ def format_rows(rows):
             f"Description: {row.get('description', '')}"
         )
     return "\n\n---\n\n".join(formatted)
+
+
+def format_tabular_rows(rows: list[dict]) -> str:
+    formatted = []
+    for row in rows:
+        parts = [f"{key}: {value}" for key, value in row.items()]
+        formatted.append("\n".join(parts))
+    return "\n\n---\n\n".join(formatted)
+
+
+def format_rows(rows):
+    if not rows:
+        return "No matching results found."
+
+    if is_product_result(rows):
+        return format_product_rows(rows)
+
+    return format_tabular_rows(rows)
 
 
 def sql_node(state):
@@ -244,13 +383,14 @@ def sql_node(state):
     try:
         rows = execute_sql_query(sql)
         result_text = format_rows(rows)
+        product_rows = rows if is_product_result(rows) else []
 
         return {
             **state,
             "route": "sql",
             "generated_sql": sql,
             "sql_result": result_text,
-            "retrieved_docs": rows,
+            "retrieved_docs": product_rows,
         }
 
     except Exception:
@@ -259,13 +399,14 @@ def sql_node(state):
         try:
             rows = execute_sql_query(fallback_sql)
             result_text = format_rows(rows)
+            product_rows = rows if is_product_result(rows) else []
 
             return {
                 **state,
                 "route": "sql",
                 "generated_sql": fallback_sql,
                 "sql_result": result_text,
-                "retrieved_docs": rows,
+                "retrieved_docs": product_rows,
             }
         except Exception as e:
             return {
