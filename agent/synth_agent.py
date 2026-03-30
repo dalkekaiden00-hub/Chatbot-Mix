@@ -74,11 +74,10 @@ def sales_fallback_answer(question: str) -> str:
 
 SQL_SYNTH_PROMPT = """
 You are formatting SQL query results for a user.
-
-Conversation history:
-{chat_history}
+User question includes conversation history, so you have to think about this.
 
 User question:
+{chat_history}
 {question}
 
 SQL result:
@@ -97,10 +96,9 @@ Instructions:
 RAG_SYNTH_PROMPT = """
 You are a friendly sales assistant for King Arthur Baking mixes.
 
-Conversation history:
-{chat_history}
 
 User question:
+{chat_history}
 {question}
 
 RAG result:

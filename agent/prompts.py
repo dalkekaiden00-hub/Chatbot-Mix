@@ -48,8 +48,7 @@ or
 REJECT
 
 Question:
+{chat_history}
 {question}
 
-Conversation history:
-{chat_history}
 """

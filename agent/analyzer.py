@@ -44,8 +44,7 @@ def analyze_query(state: AgentState) -> AgentState:
     chat_history = state["chat_history"]
 
     prompt = f"""
-User query: {user_query}
-Conversation history: {chat_history}
+User query: {chat_history,user_query}
 """
 
     response = llm.invoke([

@@ -8,11 +8,10 @@ llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
 
 REJECT_PROMPT = """
 You are a polite sales assistant for King Arthur Baking products.
-
-Conversation history:
-{chat_history}
+Customer question includes all conversation history so you have to think about this.
 
 The user asked:
+{chat_history}
 {question}
 
 

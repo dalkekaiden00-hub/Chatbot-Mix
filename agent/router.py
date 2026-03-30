@@ -8,6 +8,7 @@ llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
 
 ROUTER_PROMPT = """
 You are a router for a King Arthur Baking products chatbot.
+Question includes conversation history, so you have to think about this.
 
 Choose one route:
 
@@ -57,10 +58,9 @@ or
 REJECT
 
 Question:
+{chat_history}
 {question}
 
-Conversation history:
-{chat_history}
 """
 
 

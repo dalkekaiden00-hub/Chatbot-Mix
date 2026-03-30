@@ -9,6 +9,7 @@ llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
 
 SQL_PROMPT = """
 You are an expert SQLite query generator.
+Customer question includes all conversation history so you have to think about this.
 
 Database table:
 products(
@@ -42,10 +43,9 @@ Rules:
 - Return only SQL, no explanation, no markdown
 
 User question:
+{chat_history}
 {question}
 
-Conversation history:
-{chat_history}
 """
 
 def clean_sql(sql: str) -> str:

@@ -410,6 +410,7 @@ with left_col:
                 else:
                     try:
                         chat_history_text = format_chat_history(st.session_state.messages)
+                        print(chat_history_text)
                         result = graph.invoke({
                             "user_query": user_query,
                             "chat_history": chat_history_text

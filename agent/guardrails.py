@@ -20,6 +20,7 @@ def is_obviously_product_question(q: str) -> bool:
 
 GUARDRAIL_PROMPT = """
 You are checking whether a user question is in scope for a King Arthur Baking product assistant.
+Question includes conversation history that you have to think.
 
 In scope:
 - questions about baking mixes or baking products
@@ -36,10 +37,9 @@ or
 OUT
 
 Question:
+{chat_history}
 {question}
 
-Conversation history:
-{chat_history}
 """
 
 
