@@ -50,6 +50,10 @@ Text matching rules:
 - Instead, match all important words using AND within a field, for example:
   LOWER(name) LIKE '%gluten%' AND LOWER(name) LIKE '%free%'
 - When relevant, search multi-word filters across category, name, and description.
+- If the user appears to be asking about a specific named product
+  (for example "What is Blueberry Sour Cream Scone Mix?" or "Tell me about Bread Flour"),
+  prioritize matching all important words in the product name using AND conditions on LOWER(name).
+- For named product lookups, prefer name-based matching over broad category matching.
 
 SQL generation rules:
 - Generate a valid SQLite SELECT query only.
@@ -271,8 +275,95 @@ def build_category_filter(category: str) -> str:
     return build_single_word_match(fields_basic, category)
 
 
+def extract_product_phrase(question: str) -> str | None:
+    q = question.strip().lower()
+
+    patterns = [
+        r"^what is (.+?)\??$",
+        r"^what's (.+?)\??$",
+        r"^tell me about (.+?)\??$",
+        r"^show me (.+?)\??$",
+        r"^price of (.+?)\??$",
+        r"^what is the price of (.+?)\??$",
+        r"^do you have (.+?)\??$",
+    ]
+
+    for pattern in patterns:
+        match = re.match(pattern, q)
+        if match:
+            phrase = match.group(1).strip()
+            if phrase:
+                return phrase
+
+    return None
+
+
+def looks_like_specific_product_query(question: str) -> bool:
+    q = question.strip().lower()
+
+    if is_analytic_question(question, ""):
+        return False
+
+    if extract_product_phrase(question):
+        return True
+
+    trigger_phrases = [
+        "what is ",
+        "what's ",
+        "tell me about ",
+        "show me ",
+        "price of ",
+        "what is the price of ",
+        "do you have ",
+    ]
+
+    return any(q.startswith(p) for p in trigger_phrases)
+
+
+def build_exact_product_sql(product_phrase: str, limit_n: int = 5) -> str:
+    words = tokenize_search_phrase(product_phrase)
+    words = [w for w in words if w not in {"the", "a", "an"}]
+
+    if not words:
+        return """
+SELECT id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
+FROM products
+ORDER BY rating DESC, review_count DESC
+LIMIT 5
+""".strip()
+
+    name_match = " AND ".join(
+        [f"LOWER(name) LIKE '%{escape_sql_like(word)}%'" for word in words]
+    )
+
+    desc_match = " AND ".join(
+        [f"LOWER(description) LIKE '%{escape_sql_like(word)}%'" for word in words]
+    )
+
+    sql = f"""
+SELECT id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
+FROM products
+WHERE ({name_match}) OR ({desc_match})
+ORDER BY
+    CASE
+        WHEN ({name_match}) THEN 0
+        ELSE 1
+    END,
+    rating DESC,
+    review_count DESC
+LIMIT {limit_n}
+""".strip()
+
+    return sql
+
+
 def build_fallback_sql(question: str, chat_history: str) -> str:
     limit_n = extract_requested_limit(question, chat_history)
+
+    if looks_like_specific_product_query(question):
+        product_phrase = extract_product_phrase(question)
+        if product_phrase:
+            return build_exact_product_sql(product_phrase, limit_n=5)
 
     q_cat = extract_category(question)
     h_cat = extract_category(chat_history)

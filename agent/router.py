@@ -1,3 +1,5 @@
+import re
+
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
@@ -10,7 +12,8 @@ llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
 CATEGORY_WORDS = [
     "bread", "cookie", "cookies", "brownie", "brownies", "cake", "cakes",
     "pancake", "pancakes", "muffin", "muffins", "scone", "scones",
-    "pizza", "waffle", "waffles", "gluten free", "gluten-free"
+    "pizza", "waffle", "waffles", "gluten free", "gluten-free",
+    "whole wheat", "chocolate chip"
 ]
 
 SQL_CUES = [
@@ -23,7 +26,8 @@ SQL_CUES = [
     "most reviews", "least reviews",
     "count", "how many",
     "sorted by", "sort by",
-    "rating", "reviews"
+    "rating", "reviews",
+    "price", "cost"
 ]
 
 FOLLOWUP_CUES = [
@@ -34,6 +38,16 @@ FOLLOWUP_CUES = [
 COMPARATIVE_FOLLOWUP_CUES = [
     "cheaper", "more expensive", "highest rated", "lowest rated",
     "top", "best priced", "under", "over"
+]
+
+SPECIFIC_PRODUCT_PATTERNS = [
+    r"^what is .+",
+    r"^what's .+",
+    r"^tell me about .+",
+    r"^show me .+",
+    r"^price of .+",
+    r"^what is the price of .+",
+    r"^do you have .+",
 ]
 
 ROUTER_PROMPT = """
@@ -51,6 +65,15 @@ Important rule for follow-up questions:
   - counts, ranking, sorting
   and the new question changes only the category or product type,
   then route to SQL.
+
+Important rule for specific product lookup:
+- If the user appears to be asking about a specific named product,
+  route to SQL.
+- Examples:
+  - "What is Blueberry Sour Cream Scone Mix?"
+  - "Tell me about Bread Flour"
+  - "Price of Belgian Waffle Mix"
+  - "Do you have Gluten-Free Pancake Mix?"
 
 Examples of follow-up behavior:
 - "show me the cheapest bread mixes" -> "what about cookies?"
@@ -70,6 +93,7 @@ Choose one route:
 
 SQL:
 - structured filtering, sorting, counting, ranking, numeric constraints
+- exact or likely exact product lookup
 - category/type filtering such as bread, scone, cake, brownie, pancake, cookie, muffin, pizza, etc.
 - follow-up queries that inherit structured constraints from prior turns
 - use SQL for:
@@ -80,6 +104,7 @@ SQL:
   - review counts
   - averages, counts, min, max
   - sorting by price, rating, or reviews
+  - specific product lookup by name
 
 RAG:
 - recommendations
@@ -93,7 +118,6 @@ RAG:
   - Which product is good?
   - What do you recommend?
   - What are your products?
-  - Tell me about the gluten free pancake mix
   - Which mix is good for breakfast?
 
 REJECT:
@@ -116,6 +140,22 @@ Question:
 def _contains_any(text: str, phrases: list[str]) -> bool:
     text = (text or "").lower()
     return any(phrase in text for phrase in phrases)
+
+
+def _is_analytic_query(q: str) -> bool:
+    q = (q or "").lower()
+    phrases = [
+        "how many", "count", "sum", "total", "average", "avg",
+        "minimum", "maximum", "min", "max",
+        "difference", "compare", "comparison",
+        "per category", "by category"
+    ]
+    return any(p in q for p in phrases)
+
+
+def _is_specific_product_query(q: str) -> bool:
+    q = (q or "").strip().lower()
+    return any(re.match(pattern, q) for pattern in SPECIFIC_PRODUCT_PATTERNS)
 
 
 def router_node(state):
@@ -144,6 +184,14 @@ def router_node(state):
     question_has_sql_intent = _contains_any(q, SQL_CUES)
     is_followup = _contains_any(q, FOLLOWUP_CUES)
     followup_keeps_structure = _contains_any(q, COMPARATIVE_FOLLOWUP_CUES)
+    is_analytic = _is_analytic_query(q)
+    is_specific_product = _is_specific_product_query(q)
+
+    if is_analytic:
+        route = "SQL"
+
+    if is_specific_product:
+        route = "SQL"
 
     if mentions_category and question_has_sql_intent:
         route = "SQL"
