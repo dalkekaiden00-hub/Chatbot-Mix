@@ -19,6 +19,7 @@ Size: {product.get('size', '')}
 Rating: {product.get('rating', '')}
 Review Count: {product.get('review_count', '')}
 URL: {product.get('url', '')}
+Image Url:{product.get('image_url','')}
 """.strip()
 
 
@@ -36,6 +37,7 @@ def build_documents():
             "review_count": p.get("review_count"),
             "category": p.get("category", "mixes"),
             "size": p.get("size"),
+            "image_url": p.get("image_url"),
         }
         docs.append(Document(page_content=text, metadata=metadata))
 

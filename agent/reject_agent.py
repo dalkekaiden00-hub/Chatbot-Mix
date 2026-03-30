@@ -42,6 +42,7 @@ def reject_node(state):
         )
 
     return {
+        **state,
         "final_answer": response,
         "route": "reject"
     }

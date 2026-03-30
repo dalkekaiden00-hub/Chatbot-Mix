@@ -18,7 +18,6 @@ def safe_int(v, default=0):
 def rank_docs(query: str, items: list[dict]) -> list[dict]:
     q = query.lower()
 
-    # Recommendation-style queries: prioritize rating + reviews
     if any(x in q for x in ["recommend", "good", "best", "top rated", "top-rated", "which product"]):
         return sorted(
             items,
@@ -29,7 +28,6 @@ def rank_docs(query: str, items: list[dict]) -> list[dict]:
             reverse=True
         )
 
-    # Price-sensitive queries: cheaper first
     if any(x in q for x in ["cheap", "cheaper", "lowest price", "budget", "affordable"]):
         return sorted(
             items,
@@ -39,6 +37,29 @@ def rank_docs(query: str, items: list[dict]) -> list[dict]:
     return items
 
 
+def clean_page_content_description(text: str) -> str:
+    if not text:
+        return ""
+
+    text = str(text).strip()
+
+    import re
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    match = re.search(r"Description:\s*(.*)", text, re.IGNORECASE)
+    if match:
+        text = match.group(1).strip()
+
+    text = re.split(
+        r"\b(Product Name|Name|Category|Price|Rating|Review Count|Reviews|URL|Image URL|Image Url|Ingredients|Size):",
+        text,
+        flags=re.IGNORECASE
+    )[0].strip()
+
+    return text
+
+
 def rag_node(state):
     query = state["user_query"]
 
@@ -46,6 +67,7 @@ def rag_node(state):
 
     if not docs:
         return {
+            "route": "rag",
             "rag_result": "No relevant product information found.",
             "retrieved_docs": []
         }
@@ -54,14 +76,22 @@ def rag_node(state):
     for doc in docs:
         metadata = doc.metadata or {}
 
+        raw_description = metadata.get("description", "")
+        if not raw_description:
+            raw_description = clean_page_content_description(doc.page_content)
+
         item = {
+            "id": metadata.get("id"),
             "name": metadata.get("name", "Unknown"),
             "price": metadata.get("price", ""),
             "rating": metadata.get("rating", ""),
             "review_count": metadata.get("review_count", ""),
             "category": metadata.get("category", ""),
             "url": metadata.get("url", ""),
-            "content": doc.page_content
+            "image_url": metadata.get("image_url", ""),
+            "description": raw_description,
+            "ingredients": metadata.get("ingredients", ""),
+            "size": metadata.get("size", "")
         }
         retrieved_docs.append(item)
 
@@ -76,13 +106,15 @@ Rating: {item['rating']}
 Review Count: {item['review_count']}
 Category: {item['category']}
 URL: {item['url']}
-Description: {item['content']}
+Image Url: {item['image_url']}
+Description: {item['description']}
 """
         doc_summaries.append(summary.strip())
 
     rag_result = "\n\n---\n\n".join(doc_summaries)
 
     return {
+        "route": "rag",
         "rag_result": rag_result,
         "retrieved_docs": ranked_docs
     }

@@ -1,8 +1,13 @@
 import os
 import sys
 import html
+import re
+
+import requests
 import streamlit as st
 from dotenv import load_dotenv
+
+
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -39,7 +44,8 @@ def ensure_knowledge_base():
             st.error("Failed to build knowledge base.")
             st.exception(e)
             return False
-        
+
+
 def format_chat_history(messages):
     lines = []
     for msg in messages:
@@ -100,26 +106,27 @@ footer {visibility: hidden;}
     border: 1px solid #fde7d3;
 }
 
-.product-card {
+.product-native-card {
     background: #ffffff;
     border: 1px solid #ececec;
     border-radius: 16px;
-    padding: 12px 14px;
-    margin: 10px 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    padding: 14px;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.04);
 }
 
 .product-title {
     font-weight: 700;
     font-size: 1rem;
     color: #1f2937;
-    margin-bottom: 6px;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
 }
 
 .meta-row {
     font-size: 0.93rem;
     color: #4b5563;
-    margin-bottom: 4px;
+    margin-bottom: 0.2rem;
 }
 
 .badge {
@@ -287,13 +294,118 @@ def build_workflow_graph(selected_route=None, rejected=False):
 
 
 def render_chat_bubble(role: str, content: str):
-    safe_content = html.escape(content).replace("\n", "<br>")
+    safe_content = html.escape(str(content)).replace("\n", "<br>")
     css_class = "user-card" if role == "user" else "assistant-card"
     st.markdown(
         f'<div class="chat-card {css_class}">{safe_content}</div>',
         unsafe_allow_html=True
     )
 
+
+def clean_description_text(text):
+    if not text:
+        return ""
+
+    text = str(text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    match = re.search(r"Description:\s*(.*)", text, re.IGNORECASE)
+    if match:
+        text = match.group(1).strip()
+
+    text = re.split(
+        r"\b(Product Name|Name|Category|Price|Rating|Review Count|Reviews|URL|Image URL|Image Url|Ingredients|Size):",
+        text,
+        flags=re.IGNORECASE
+    )[0].strip()
+
+    return text
+
+
+def clean_assistant_answer(answer: str) -> str:
+    if not answer:
+        return ""
+
+    text = str(answer).strip()
+    text = text.replace("**", "")
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+    text = re.sub(r'\[([^\]]+)\]\((.*?)\)', r'\1', text)
+
+    cleaned_lines = []
+    skip_description_block = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        if re.match(r"^-?\s*(Image|URL)\s*:", stripped, re.IGNORECASE):
+            continue
+
+        if re.match(r"^-?\s*(Price|Category|Rating|Review Count|Reviews)\s*:", stripped, re.IGNORECASE):
+            continue
+
+        if re.match(r"^-?\s*Description\s*:", stripped, re.IGNORECASE):
+            skip_description_block = True
+            continue
+
+        if skip_description_block:
+            continue
+
+        cleaned_lines.append(line)
+
+    text = "\n".join(cleaned_lines)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if paragraphs:
+        return paragraphs[0]
+
+    return text
+
+
+def normalize_price(price):
+    if isinstance(price, (int, float)):
+        return f"${price:.2f}"
+    if price not in [None, "", "N/A"]:
+        price = str(price).strip()
+        return price if price.startswith("$") else f"${price}"
+    return "N/A"
+
+
+@st.cache_data(show_spinner=False)
+def fetch_image_bytes(url: str, timeout: int = 15):
+    if not url:
+        return None
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://shop.kingarthurbaking.com/",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        response.raise_for_status()
+
+        content_type = response.headers.get("Content-Type", "")
+        if "image" not in content_type.lower():
+            return None
+
+        return response.content
+    except Exception:
+        return None
+
+
+def render_badges(category, rating, price_text):
+    badge_html = '<div style="margin-top:8px; margin-bottom:8px;">'
+    if category not in [None, "", "N/A"]:
+        badge_html += f'<span class="badge">{html.escape(str(category))}</span>'
+    if rating not in [None, "", "N/A"]:
+        badge_html += f'<span class="badge">⭐ {html.escape(str(rating))}</span>'
+    if price_text not in [None, "", "N/A"]:
+        badge_html += f'<span class="badge">{html.escape(str(price_text))}</span>'
+    badge_html += '</div>'
+    st.markdown(badge_html, unsafe_allow_html=True)
 
 def render_product_cards(retrieved_docs):
     if not retrieved_docs:
@@ -303,10 +415,7 @@ def render_product_cards(retrieved_docs):
     cols = st.columns(2)
 
     for i, doc in enumerate(retrieved_docs[:6]):
-        if hasattr(doc, "metadata"):
-            data = doc.metadata
-        else:
-            data = doc
+        data = doc.metadata if hasattr(doc, "metadata") else doc
 
         name = data.get("name", "Unknown")
         price = data.get("price")
@@ -315,7 +424,9 @@ def render_product_cards(retrieved_docs):
             data.get("rating")
             or data.get("average_rating")
             or data.get("stars")
+            or "N/A"
         )
+
         review_count = (
             data.get("review_count")
             or data.get("reviews")
@@ -324,41 +435,63 @@ def render_product_cards(retrieved_docs):
             or data.get("reviewCount")
             or data.get("rating_count")
             or data.get("total_reviews")
+            or "N/A"
         )
+
         url = data.get("url", "#")
+        image_url = (
+            data.get("image_url")
+            or data.get("image")
+            or data.get("img_url")
+            or data.get("thumbnail")
+            or data.get("imageUrl")
+            or ""
+        )
 
-        price_display = price if price is not None else "N/A"
-        rating_display = rating if rating is not None else "N/A"
-        review_display = review_count if review_count is not None else "N/A"
+        description = clean_description_text(
+            data.get("description", "") or data.get("content", "")
+        )
 
-        if isinstance(price_display, (int, float)):
-            price_badge = f"${price_display:.2f}"
-        elif str(price_display) != "N/A" and not str(price_display).startswith("$"):
-            price_badge = f"${price_display}"
-        else:
-            price_badge = str(price_display)
+        price_text = normalize_price(price)
+        short_desc = (
+            description[:140] + ("..." if len(description) > 140 else "")
+            if description else ""
+        )
 
         with cols[i % 2]:
-            st.markdown(
-                f"""
-                <div class="product-card">
-                    <div class="product-title">{html.escape(str(name))}</div>
-                    <div class="meta-row"><b>Price:</b> {html.escape(str(price_display))}</div>
-                    <div class="meta-row"><b>Category:</b> {html.escape(str(category))}</div>
-                    <div class="meta-row"><b>Rating:</b> {html.escape(str(rating_display))}</div>
-                    <div class="meta-row"><b>Reviews:</b> {html.escape(str(review_display))}</div>
-                    <div>
-                        <span class="badge">{html.escape(str(category))}</span>
-                        <span class="badge">⭐ {html.escape(str(rating_display))}</span>
-                        <span class="badge">{html.escape(price_badge)}</span>
-                    </div>
-                    <div style="margin-top:10px;">
-                        <a href="{html.escape(str(url))}" target="_blank">View product</a>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            with st.container(border=True):
+                st.markdown(f"**{name}**")
+
+                st.write(f"**Price:** {price_text}")
+                st.write(f"**Category:** {category}")
+                st.write(f"**Rating:** {rating}")
+                st.write(f"**Reviews:** {review_count}")
+
+                if image_url:
+                    st.image(image_url, width=90)
+
+                if short_desc:
+                    st.caption(short_desc)
+
+                tags = []
+                if category not in [None, "", "N/A"]:
+                    tags.append(category)
+                if rating not in [None, "", "N/A"]:
+                    tags.append(f"⭐ {rating}")
+                if price_text not in [None, "", "N/A"]:
+                    tags.append(str(price_text))
+
+                if tags:
+                    st.caption(" • ".join(tags))
+
+                if url and url != "#":
+                    try:
+                        st.link_button("View product", url, use_container_width=True)
+                    except:
+                        st.markdown(f"[View product]({url})")
+
+
+
 
 
 if graph_import_error:
@@ -366,7 +499,6 @@ if graph_import_error:
     st.code(graph_import_error)
 
 left_col, right_col = st.columns([2.2, 1])
-
 
 with left_col:
     st.subheader("Chat")
@@ -410,19 +542,33 @@ with left_col:
                 else:
                     try:
                         chat_history_text = format_chat_history(st.session_state.messages)
-                        print(chat_history_text)
                         result = graph.invoke({
                             "user_query": user_query,
                             "chat_history": chat_history_text
-                        })  
+                        })
                     except Exception as e:
                         result = {
                             "final_answer": f"Error: {str(e)}",
                             "route": "error"
                         }
 
-                final_answer = result.get("final_answer", "Sorry, I could not generate an answer.")
+                raw_final_answer = result.get("final_answer", "Sorry, I could not generate an answer.")
                 retrieved_docs = result.get("retrieved_docs", [])
+
+                final_answer = clean_assistant_answer(raw_final_answer)
+
+                if retrieved_docs:
+                    top_doc = retrieved_docs[0].metadata if hasattr(retrieved_docs[0], "metadata") else retrieved_docs[0]
+                    top_name = top_doc.get("name", "this product")
+                    top_price = top_doc.get("price")
+
+                    if result.get("route") == "sql":
+                        if top_price not in [None, "", "N/A"]:
+                            final_answer = f'The top result I found is "{top_name}" priced at ${top_price}.'
+                        else:
+                            final_answer = f'The top result I found is "{top_name}".'
+                    elif not final_answer or len(final_answer) > 300:
+                        final_answer = f'The best match I found is "{top_name}".'
 
                 render_chat_bubble("assistant", final_answer)
                 render_product_cards(retrieved_docs)
@@ -436,77 +582,19 @@ with left_col:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    
 with right_col:
     st.markdown('<div class="side-card">', unsafe_allow_html=True)
     st.subheader("Workflow Graph")
     result = st.session_state.get("last_result", None)
-    
+
     if result:
         route = result.get("route")
         out_of_scope = result.get("out_of_scope", False)
         rejected = out_of_scope or route == "reject"
         st.graphviz_chart(build_workflow_graph(selected_route=route, rejected=rejected))
-    
     else:
         st.graphviz_chart(build_workflow_graph())
+
     st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="side-card">', unsafe_allow_html=True)
-    st.markdown("### How it works")
-    st.markdown(
-        """
-        1. **Guardrail** checks whether the question is about King Arthur Baking mixes  
-        2. **Router** chooses:
-           - **SQL** for structured/numeric queries
-           - **RAG** for semantic product help
-        3. **Synthesis** produces the final customer-facing answer
-        """
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="side-card">', unsafe_allow_html=True)
-    st.markdown("### Try asking")
-    q1 = st.button("Which product is good?")
-    q2 = st.button("What are cheapest products?")
-    q3 = st.button("Recommend a gluten-free mix")
-    st.markdown('<div class="small-muted">Click a suggestion to auto-send it.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
 
 st.divider()
-#st.subheader("Execution View")
-
-# result = st.session_state.get("last_result", None)
-
-# if result:
-#     route = result.get("route")
-#     out_of_scope = result.get("out_of_scope", False)
-#     rejected = out_of_scope or route == "reject"
-
-    # st.graphviz_chart(build_workflow_graph(selected_route=route, rejected=rejected))
-
-    # with st.expander("Execution Details"):
-    #     st.write(f"**Route:** `{route}`")
-    #     st.write(f"**Out of scope:** `{out_of_scope}`")
-
-    #     if result.get("generated_sql"):
-    #         st.write("**Generated SQL**")
-    #         st.code(result["generated_sql"], language="sql")
-
-    #     if result.get("sql_result"):
-    #         st.write("**SQL Result**")
-    #         st.text(result["sql_result"])
-
-    #     if result.get("rag_result"):
-    #         st.write("**RAG Result**")
-    #         st.text(result["rag_result"])
-
-    #     if result.get("retrieved_docs"):
-    #         st.write("**Retrieved Documents**")
-    #         for i, doc in enumerate(result["retrieved_docs"], start=1):
-    #             st.markdown(f"**Doc {i}**")
-    #             st.json(doc)
-# else:
-#     st.info("Ask a question to see the executed workflow path.")

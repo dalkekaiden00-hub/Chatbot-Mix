@@ -39,14 +39,16 @@ Rules:
 - If the user asks for a specific category/type like bread, scone, cake, brownie, etc., filter on category
 - For ranking questions like cheapest, most expensive, highest rated, or most reviewed, use ORDER BY appropriately
 - Use LOWER(category) for case-insensitive matching when filtering category text
+- Always include these columns in the SELECT output:
+  id, name, url, price, description, ingredients, size, rating, review_count, image_url, category
 - Limit results to 10 unless user asks for more
 - Return only SQL, no explanation, no markdown
 
 User question:
 {chat_history}
 {question}
-
 """
+
 
 def clean_sql(sql: str) -> str:
     sql = sql.strip()
@@ -77,14 +79,16 @@ def sql_node(state):
     question = state["user_query"]
     chat_history = state["chat_history"]
 
-    prompt = SQL_PROMPT.format(question=question,chat_history=chat_history)
+    prompt = SQL_PROMPT.format(question=question, chat_history=chat_history)
     sql = llm.invoke(prompt).content
     sql = clean_sql(sql)
 
     if not is_safe_select(sql):
         return {
+            "route": "sql",
             "generated_sql": sql,
-            "sql_result": "No valid SQL query could be generated."
+            "sql_result": "No valid SQL query could be generated.",
+            "retrieved_docs": []
         }
 
     try:
@@ -93,16 +97,31 @@ def sql_node(state):
         if not rows:
             result_text = "No matching products found."
         else:
-            lines = [str(row) for row in rows]
-            result_text = "\n".join(lines)
+            formatted = []
+            for row in rows:
+                formatted.append(
+                    f"Name: {row.get('name', 'Unknown')}\n"
+                    f"Price: {row.get('price', 'N/A')}\n"
+                    f"Category: {row.get('category', 'N/A')}\n"
+                    f"Rating: {row.get('rating', 'N/A')}\n"
+                    f"Review Count: {row.get('review_count', 'N/A')}\n"
+                    f"URL: {row.get('url', '')}\n"
+                    f"Image URL: {row.get('image_url', '')}\n"
+                    f"Description: {row.get('description', '')}"
+                )
+            result_text = "\n\n---\n\n".join(formatted)
 
         return {
+            "route": "sql",
             "generated_sql": sql,
-            "sql_result": result_text
+            "sql_result": result_text,
+            "retrieved_docs": rows
         }
 
     except Exception as e:
         return {
+            "route": "sql",
             "generated_sql": sql,
-            "sql_result": f"SQL execution error: {str(e)}"
+            "sql_result": f"SQL execution error: {str(e)}",
+            "retrieved_docs": []
         }

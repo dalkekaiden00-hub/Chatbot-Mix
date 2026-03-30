@@ -146,7 +146,10 @@ def synth_node(state):
     if route == "rag":
         recommended = recommend_from_docs(retrieved_docs, question)
         if recommended:
-            return {"final_answer": recommended}
+            return {
+                **state,
+                "final_answer": recommended
+                }
 
     # SQL route: if SQL worked, use SQL result directly
     if route == "sql" and not looks_like_sql_failure(sql_result) and sql_result != "No matching products found.":
@@ -159,13 +162,22 @@ def synth_node(state):
         ).content.strip()
 
         if response:
-            return {"final_answer": response}
+            return {
+                **state,
+                "final_answer": response
+                }
 
-        return {"final_answer": sql_result}
+        return {
+            **state,
+            "final_answer": sql_result
+            }
 
     # SQL route but no rows
     if route == "sql" and sql_result == "No matching products found.":
-        return {"final_answer": "I couldn’t find any matching products for that request."}
+        return {
+            **state,
+            "final_answer": "I couldn’t find any matching products for that request."
+            }
 
     # RAG route
     if route == "rag" and not is_empty_rag(rag_result):
@@ -177,6 +189,12 @@ def synth_node(state):
         ).content.strip()
 
         if response:
-            return {"final_answer": response}
+            return {
+                **state,
+                "final_answer": response
+                }
 
-    return {"final_answer": sales_fallback_answer(question)}
+    return {
+        **state,
+        "final_answer": sales_fallback_answer(question)
+        }
