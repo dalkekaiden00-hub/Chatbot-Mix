@@ -20,7 +20,6 @@ def build_graph():
 
     workflow.set_entry_point("guardrail")
 
-    # guardrail branch
     workflow.add_conditional_edges(
         "guardrail",
         lambda state: "reject" if state.get("out_of_scope") else "router",
@@ -30,7 +29,6 @@ def build_graph():
         },
     )
 
-    # router branch
     workflow.add_conditional_edges(
         "router",
         lambda state: state.get("route", "reject"),
@@ -48,5 +46,6 @@ def build_graph():
     workflow.add_edge("reject", END)
 
     return workflow.compile()
+
 
 graph = build_graph()

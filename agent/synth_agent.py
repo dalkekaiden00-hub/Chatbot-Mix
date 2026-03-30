@@ -1,200 +1,154 @@
-from dotenv import load_dotenv
+from typing import Any, Dict, List
+
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from utils.config import OPENAI_CHAT_MODEL
 
-load_dotenv()
 
-llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
-
-
-def format_product_line(doc: dict) -> str:
-    name = doc.get("name", "Unknown product")
-    price = doc.get("price")
-    rating = doc.get("rating")
-    review_count = doc.get("review_count")
-    category = doc.get("category")
-
-    parts = [name]
-
-    if category:
-        parts.append(f"category: {category}")
-    if price not in [None, ""]:
-        parts.append(f"price: {price}")
-    if rating not in [None, ""]:
-        if review_count not in [None, ""]:
-            parts.append(f"rating: {rating} ({review_count} reviews)")
-        else:
-            parts.append(f"rating: {rating}")
-
-    return " | ".join(parts)
+def _doc_to_metadata(doc: Any) -> Dict[str, Any]:
+    if hasattr(doc, "metadata"):
+        return doc.metadata or {}
+    if isinstance(doc, dict):
+        return doc
+    return {}
 
 
-def recommend_from_docs(retrieved_docs: list[dict], question: str) -> str:
+def _format_docs_for_prompt(retrieved_docs: List[Any]) -> str:
     if not retrieved_docs:
-        return ""
+        return "No retrieved products."
 
-    top_docs = retrieved_docs[:3]
-    product_lines = [f"- {format_product_line(doc)}" for doc in top_docs]
+    chunks = []
+    for i, doc in enumerate(retrieved_docs[:6], start=1):
+        data = _doc_to_metadata(doc)
 
-    return (
-        "Here are a few King Arthur Baking products you may want to consider:\n\n"
-        + "\n".join(product_lines)
-        + "\n\nIf you tell me what you want to bake—such as pancakes, brownies, cake, or gluten-free items—I can narrow it down further."
-    )
-
-
-def sales_fallback_answer(question: str) -> str:
-    q = question.lower().strip()
-
-    if "cheese" in q:
-        return (
-            "I couldn’t find a cheese product in the King Arthur Baking mixes catalog. "
-            "I can help with baking mixes such as pancake mixes, brownie mixes, cake mixes, "
-            "and gluten-free options. If you want, I can recommend one of those."
+        name = data.get("name", "Unknown")
+        category = data.get("category", "N/A")
+        price = data.get("price", "N/A")
+        rating = (
+            data.get("rating")
+            or data.get("average_rating")
+            or data.get("stars")
+            or "N/A"
         )
-
-    if "which product is good" in q or "what do you recommend" in q or "which one should i buy" in q:
-        return (
-            "We have several strong baking mix options depending on what you want to make. "
-            "I can help you choose a pancake mix, brownie mix, cake mix, or gluten-free option."
+        review_count = (
+            data.get("review_count")
+            or data.get("reviews")
+            or data.get("review_cnt")
+            or data.get("num_reviews")
+            or data.get("reviewCount")
+            or data.get("rating_count")
+            or data.get("total_reviews")
+            or "N/A"
         )
+        description = data.get("description") or data.get("content") or ""
+        url = data.get("url", "")
 
-    if "product" in q or "products" in q or "mix" in q or "mixes" in q:
-        return (
-            "I can help with King Arthur Baking products and baking mixes. "
-            "We offer items like pancake mixes, brownie mixes, cake mixes, and gluten-free baking options. "
-            "Tell me what you’d like to bake, and I’ll recommend a product."
-        )
+        chunk = f"""
+Product {i}
+Name: {name}
+Category: {category}
+Price: {price}
+Rating: {rating}
+Review Count: {review_count}
+Description: {description}
+URL: {url}
+        """.strip()
 
-    return (
-        "I can help with King Arthur Baking mixes and related baking products. "
-        "Tell me what you’d like to bake, and I’ll recommend a product."
-    )
+        chunks.append(chunk)
 
-
-SQL_SYNTH_PROMPT = """
-You are formatting SQL query results for a user.
-User question includes conversation history, so you have to think about this.
-
-User question:
-{chat_history}
-{question}
-
-SQL result:
-{sql_result}
-
-Instructions:
-- The SQL result is authoritative
-- Answer directly from the SQL result
-- If the user asked for rankings, top N, cheapest, most expensive, highest rated, counts, or filters, present the result clearly as a list
-- Do not say the information is unavailable if SQL result contains rows
-- Do not redirect the user to general categories
-- Be concise and factual
-"""
+    return "\n\n".join(chunks)
 
 
-RAG_SYNTH_PROMPT = """
-You are a friendly sales assistant for King Arthur Baking mixes.
-
-
-User question:
-{chat_history}
-{question}
-
-RAG result:
-{rag_result}
-
-Instructions:
-- Answer like a helpful sales assistant
-- Use the retrieved information
-- If nothing relevant is found, clearly say that
-- Then guide the user toward available King Arthur Baking product categories
-- Be concise and helpful
-"""
-
-
-def looks_like_sql_failure(sql_result: str) -> bool:
-    if not sql_result:
-        return True
-
-    text = str(sql_result).strip().lower()
-
-    return (
-        text in ["", "none", "[]"]
-        or text.startswith("sql execution error:")
-        or text == "no valid sql query could be generated."
-    )
-
-
-def is_empty_rag(rag_result: str) -> bool:
-    if not rag_result:
-        return True
-
-    text = str(rag_result).strip()
-    return text in ["", "None", "[]", "No relevant product information found."]
-
-
-def synth_node(state):
-    question = state.get("user_query", "")
-    chat_history = state.get("chat_history","")
-    route = state.get("route", "")
+def synth_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    user_query = state.get("user_query", "")
+    chat_history = state.get("chat_history", "")
+    retrieved_docs = state.get("retrieved_docs", [])
+    route = state.get("route", "unknown")
     sql_result = state.get("sql_result", "")
     rag_result = state.get("rag_result", "")
-    retrieved_docs = state.get("retrieved_docs", [])
+    generated_sql = state.get("generated_sql", "")
 
-    # For RAG queries, prefer product recommendation from retrieved docs
-    if route == "rag":
-        recommended = recommend_from_docs(retrieved_docs, question)
-        if recommended:
-            return {
-                **state,
-                "final_answer": recommended
-                }
+    llm = ChatOpenAI(
+        model=OPENAI_CHAT_MODEL,
+        temperature=0.2
+    )
 
-    # SQL route: if SQL worked, use SQL result directly
-    if route == "sql" and not looks_like_sql_failure(sql_result) and sql_result != "No matching products found.":
-        response = llm.invoke(
-            SQL_SYNTH_PROMPT.format(
-                question=question,
-                chat_history=chat_history,
-                sql_result=sql_result,
-            )
-        ).content.strip()
+    docs_text = _format_docs_for_prompt(retrieved_docs)
 
-        if response:
-            return {
-                **state,
-                "final_answer": response
-                }
+    system_prompt = """
+You are a helpful King Arthur Baking product recommendation assistant.
 
-        return {
-            **state,
-            "final_answer": sql_result
-            }
+Your job:
+- Answer the user's question using the retrieved product data.
+- If the route is SQL, prioritize structured results like price, rating, review count, sorting, and category filters.
+- If the route is RAG, prioritize semantic relevance and product descriptions.
+- Recommend the most relevant products for the user's stated needs.
+- Use product metadata like category, price, rating, review count, and description.
+- If multiple products are relevant, briefly compare them.
+- Be concise, clear, and user-friendly.
+- Do not invent facts that are not present in the retrieved data.
+- If the retrieved data is weak or incomplete, say so briefly and still provide the best available recommendation.
+- Prefer recommending 1 to 3 products rather than listing everything.
+- If asked for the cheapest, best-rated, easiest, gluten-free, etc., use the available metadata to support the recommendation.
 
-    # SQL route but no rows
-    if route == "sql" and sql_result == "No matching products found.":
-        return {
-            **state,
-            "final_answer": "I couldn’t find any matching products for that request."
-            }
+Response style:
+- Start with a direct answer or recommendation.
+- Then add a short reason.
+- Keep the answer to about 2 to 5 sentences.
+- Do not output markdown bullets unless necessary.
+- Do not include raw URLs unless specifically useful.
+""".strip()
 
-    # RAG route
-    if route == "rag" and not is_empty_rag(rag_result):
-        response = llm.invoke(
-            RAG_SYNTH_PROMPT.format(
-                question=question,
-                rag_result=rag_result,
-            )
-        ).content.strip()
+    human_prompt = f"""
+Route: {route}
 
-        if response:
-            return {
-                **state,
-                "final_answer": response
-                }
+Chat history:
+{chat_history}
+
+User query:
+{user_query}
+
+Generated SQL:
+{generated_sql}
+
+SQL result summary:
+{sql_result}
+
+RAG result summary:
+{rag_result}
+
+Retrieved products:
+{docs_text}
+
+Now write the final answer for the user.
+""".strip()
+
+    try:
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ])
+        final_answer = response.content if hasattr(response, "content") else str(response)
+    except Exception:
+        if retrieved_docs:
+            top = retrieved_docs[:3]
+            parts = []
+            for item in top:
+                data = _doc_to_metadata(item)
+                name = data.get("name", "Unknown")
+                price = data.get("price", "N/A")
+                category = data.get("category", "N/A")
+                rating = data.get("rating", "N/A")
+                parts.append(f"{name} (${price}, {category}, rating {rating})")
+            final_answer = "Here are some relevant options: " + "; ".join(parts) + "."
+        elif route == "sql" and sql_result:
+            final_answer = sql_result
+        elif rag_result:
+            final_answer = rag_result
+        else:
+            final_answer = "I couldn’t find a strong match right now. Try asking about bread, cookies, brownies, cakes, or pancake mixes."
 
     return {
         **state,
-        "final_answer": sales_fallback_answer(question)
-        }
+        "final_answer": final_answer
+    }

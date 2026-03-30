@@ -8,7 +8,6 @@ import streamlit as st
 from dotenv import load_dotenv
 
 
-
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -21,7 +20,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------- Ensure knowledge base exists BEFORE importing graph ----------
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "db", "mixes.db")
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "data", "vectorstore")
 FAISS_FILE = os.path.join(VECTORSTORE_DIR, "index.faiss")
@@ -68,7 +66,6 @@ if kb_ready:
 else:
     graph_import_error = "Knowledge base could not be built."
 
-# ---------- Custom CSS ----------
 st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
@@ -106,29 +103,6 @@ footer {visibility: hidden;}
     border: 1px solid #fde7d3;
 }
 
-.product-native-card {
-    background: #ffffff;
-    border: 1px solid #ececec;
-    border-radius: 16px;
-    padding: 14px;
-    margin-bottom: 16px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.04);
-}
-
-.product-title {
-    font-weight: 700;
-    font-size: 1rem;
-    color: #1f2937;
-    margin-top: 0.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.meta-row {
-    font-size: 0.93rem;
-    color: #4b5563;
-    margin-bottom: 0.2rem;
-}
-
 .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -148,11 +122,6 @@ footer {visibility: hidden;}
     padding: 1rem;
     box-shadow: 0 4px 14px rgba(0,0,0,0.04);
     margin-bottom: 1rem;
-}
-
-.small-muted {
-    color: #6b7280;
-    font-size: 0.92rem;
 }
 
 .stChatInputContainer {
@@ -186,14 +155,12 @@ def build_workflow_graph(selected_route=None, rejected=False):
                 "color": "deepskyblue4",
                 "penwidth": "2.2",
             })
-
         elif active_route == "rag" and name in ["UserQuery", "Guardrail", "Router", "RAG", "Synthesis", "FinalAnswer"]:
             base.update({
                 "fillcolor": "palegreen",
                 "color": "darkgreen",
                 "penwidth": "2.2",
             })
-
         elif active_route == "reject" and name in ["UserQuery", "Guardrail", "RejectLLM", "FinalAnswer"]:
             base.update({
                 "fillcolor": "mistyrose",
@@ -201,7 +168,6 @@ def build_workflow_graph(selected_route=None, rejected=False):
                 "fontcolor": "black",
                 "penwidth": "2.2",
             })
-
         elif name == "FinalAnswer":
             base.update({
                 "fillcolor": "plum1",
@@ -229,7 +195,6 @@ def build_workflow_graph(selected_route=None, rejected=False):
                 ("Synthesis", "FinalAnswer"),
             }
             active_color = "deepskyblue4"
-
         elif active_route == "rag":
             active_edges = {
                 ("UserQuery", "Guardrail"),
@@ -239,7 +204,6 @@ def build_workflow_graph(selected_route=None, rejected=False):
                 ("Synthesis", "FinalAnswer"),
             }
             active_color = "darkgreen"
-
         elif active_route == "reject":
             active_edges = {
                 ("UserQuery", "Guardrail"),
@@ -372,41 +336,6 @@ def normalize_price(price):
     return "N/A"
 
 
-@st.cache_data(show_spinner=False)
-def fetch_image_bytes(url: str, timeout: int = 15):
-    if not url:
-        return None
-
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Referer": "https://shop.kingarthurbaking.com/",
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-        response.raise_for_status()
-
-        content_type = response.headers.get("Content-Type", "")
-        if "image" not in content_type.lower():
-            return None
-
-        return response.content
-    except Exception:
-        return None
-
-
-def render_badges(category, rating, price_text):
-    badge_html = '<div style="margin-top:8px; margin-bottom:8px;">'
-    if category not in [None, "", "N/A"]:
-        badge_html += f'<span class="badge">{html.escape(str(category))}</span>'
-    if rating not in [None, "", "N/A"]:
-        badge_html += f'<span class="badge">⭐ {html.escape(str(rating))}</span>'
-    if price_text not in [None, "", "N/A"]:
-        badge_html += f'<span class="badge">{html.escape(str(price_text))}</span>'
-    badge_html += '</div>'
-    st.markdown(badge_html, unsafe_allow_html=True)
-
 def render_product_cards(retrieved_docs):
     if not retrieved_docs:
         return
@@ -461,14 +390,16 @@ def render_product_cards(retrieved_docs):
         with cols[i % 2]:
             with st.container(border=True):
                 st.markdown(f"**{name}**")
-
                 st.write(f"**Price:** {price_text}")
                 st.write(f"**Category:** {category}")
                 st.write(f"**Rating:** {rating}")
                 st.write(f"**Reviews:** {review_count}")
 
                 if image_url:
-                    st.image(image_url, width=90)
+                    try:
+                        st.image(image_url, width=90)
+                    except Exception:
+                        pass
 
                 if short_desc:
                     st.caption(short_desc)
@@ -487,11 +418,8 @@ def render_product_cards(retrieved_docs):
                 if url and url != "#":
                     try:
                         st.link_button("View product", url, use_container_width=True)
-                    except:
+                    except Exception:
                         st.markdown(f"[View product]({url})")
-
-
-
 
 
 if graph_import_error:
@@ -527,7 +455,7 @@ with left_col:
         st.session_state.pending_query = None
 
     if user_query:
-        st.session_state.messages.append({"role": "user", "content": user_query})
+        previous_messages = st.session_state.messages.copy()
 
         with st.chat_message("user", avatar="👤"):
             render_chat_bubble("user", user_query)
@@ -537,11 +465,12 @@ with left_col:
                 if graph_import_error:
                     result = {
                         "final_answer": "The chatbot agent is not available right now.",
-                        "route": "error"
+                        "route": "error",
+                        "retrieved_docs": []
                     }
                 else:
                     try:
-                        chat_history_text = format_chat_history(st.session_state.messages)
+                        chat_history_text = format_chat_history(previous_messages)
                         result = graph.invoke({
                             "user_query": user_query,
                             "chat_history": chat_history_text
@@ -549,36 +478,47 @@ with left_col:
                     except Exception as e:
                         result = {
                             "final_answer": f"Error: {str(e)}",
-                            "route": "error"
+                            "route": "error",
+                            "retrieved_docs": []
                         }
 
-                raw_final_answer = result.get("final_answer", "Sorry, I could not generate an answer.")
+                raw_final_answer = result.get(
+                    "final_answer",
+                    "Sorry, I could not generate an answer."
+                )
                 retrieved_docs = result.get("retrieved_docs", [])
 
                 final_answer = clean_assistant_answer(raw_final_answer)
 
-                if retrieved_docs:
-                    top_doc = retrieved_docs[0].metadata if hasattr(retrieved_docs[0], "metadata") else retrieved_docs[0]
-                    top_name = top_doc.get("name", "this product")
-                    top_price = top_doc.get("price")
+                if retrieved_docs and (not final_answer or final_answer.lower().startswith("error:")):
+                    product_names = []
+                    for doc in retrieved_docs[:3]:
+                        data = doc.metadata if hasattr(doc, "metadata") else doc
+                        name = data.get("name")
+                        if name:
+                            product_names.append(name)
 
-                    if result.get("route") == "sql":
-                        if top_price not in [None, "", "N/A"]:
-                            final_answer = f'The top result I found is "{top_name}" priced at ${top_price}.'
-                        else:
-                            final_answer = f'The top result I found is "{top_name}".'
-                    elif not final_answer or len(final_answer) > 300:
-                        final_answer = f'The best match I found is "{top_name}".'
+                    if product_names:
+                        final_answer = "Here are the best matches I found: " + ", ".join(
+                            f'"{name}"' for name in product_names
+                        ) + "."
+                    else:
+                        final_answer = "I found some relevant products for you."
 
                 render_chat_bubble("assistant", final_answer)
                 render_product_cards(retrieved_docs)
 
                 st.session_state.last_result = result
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": final_answer,
-                    "products": retrieved_docs
-                })
+
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_query
+        })
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": final_answer,
+            "products": retrieved_docs
+        })
 
     st.markdown('</div>', unsafe_allow_html=True)
 

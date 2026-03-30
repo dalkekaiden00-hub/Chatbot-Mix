@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Any
 
 
 class AgentState(TypedDict, total=False):
@@ -9,5 +9,5 @@ class AgentState(TypedDict, total=False):
     generated_sql: str
     sql_result: str
     rag_result: str
-    retrieved_docs: List[Dict[str, Any]]
+    retrieved_docs: List[Any]
     final_answer: str
