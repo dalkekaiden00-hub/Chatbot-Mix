@@ -45,7 +45,7 @@ SQL generation rules:
 - Generate a valid SQLite SELECT query only.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, REPLACE, PRAGMA, ATTACH.
 - Always include these columns in SELECT:
-  id, name, url, price, description, ingredients, size, rating, review_count, image_url, category
+  id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
 - Use case-insensitive matching with LOWER(...)
 - For category filters, prefer:
   LOWER(category) LIKE '%cookie%' OR LOWER(name) LIKE '%cookie%'
@@ -180,7 +180,7 @@ def build_fallback_sql(question: str, chat_history: str) -> str:
     order_by = infer_sort_from_context(question, chat_history)
 
     select_clause = """
-SELECT id, name, url, price, description, ingredients, size, rating, review_count, image_url, category
+SELECT id, name, url, price, description, ingredients, size, rating, review_count AS review, image_url, category
 FROM products
 """.strip()
 
@@ -214,7 +214,7 @@ def format_rows(rows):
             f"Price: {row.get('price', 'N/A')}\n"
             f"Category: {row.get('category', 'N/A')}\n"
             f"Rating: {row.get('rating', 'N/A')}\n"
-            f"Review Count: {row.get('review_count', 'N/A')}\n"
+            f"Review: {row.get('review', row.get('review_count', 'N/A'))}\n"
             f"URL: {row.get('url', '')}\n"
             f"Image URL: {row.get('image_url', '')}\n"
             f"Description: {row.get('description', '')}"

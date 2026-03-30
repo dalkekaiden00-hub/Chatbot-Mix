@@ -1,10 +1,40 @@
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+
 from utils.config import OPENAI_CHAT_MODEL
 
 load_dotenv()
 
 llm = ChatOpenAI(model=OPENAI_CHAT_MODEL, temperature=0)
+
+CATEGORY_WORDS = [
+    "bread", "cookie", "cookies", "brownie", "brownies", "cake", "cakes",
+    "pancake", "pancakes", "muffin", "muffins", "scone", "scones",
+    "pizza", "waffle", "waffles", "gluten free", "gluten-free"
+]
+
+SQL_CUES = [
+    "cheap", "cheaper", "cheapest",
+    "expensive", "more expensive", "most expensive",
+    "highest rated", "lowest rated",
+    "top ", "bottom ",
+    "under $", "over $",
+    "less than", "more than",
+    "most reviews", "least reviews",
+    "count", "how many",
+    "sorted by", "sort by",
+    "rating", "reviews"
+]
+
+FOLLOWUP_CUES = [
+    "what about", "how about", "then", "and", "those", "ones",
+    "same for", "same with", "what about those"
+]
+
+COMPARATIVE_FOLLOWUP_CUES = [
+    "cheaper", "more expensive", "highest rated", "lowest rated",
+    "top", "best priced", "under", "over"
+]
 
 ROUTER_PROMPT = """
 You are a router for a King Arthur Baking products chatbot.
@@ -83,65 +113,42 @@ Question:
 """
 
 
+def _contains_any(text: str, phrases: list[str]) -> bool:
+    text = (text or "").lower()
+    return any(phrase in text for phrase in phrases)
+
+
 def router_node(state):
     question = state.get("user_query", "")
     chat_history = state.get("chat_history", "")
 
+    q = question.lower()
+    h = chat_history.lower()
+
     try:
-        route = llm.invoke(
+        response = llm.invoke(
             ROUTER_PROMPT.format(
                 question=question,
                 chat_history=chat_history
             )
-        ).content.strip().upper()
+        )
+        route = response.content.strip().upper()
     except Exception:
         route = "RAG"
 
     if route not in {"SQL", "RAG", "REJECT"}:
         route = "RAG"
 
-    q = question.lower()
-    h = chat_history.lower()
-
-    category_words = [
-        "bread", "cookie", "cookies", "brownie", "brownies", "cake", "cakes",
-        "pancake", "pancakes", "muffin", "muffins", "scone", "scones",
-        "pizza", "waffle", "waffles", "gluten free", "gluten-free"
-    ]
-
-    sql_cues = [
-        "cheap", "cheaper", "cheapest",
-        "expensive", "more expensive", "most expensive",
-        "highest rated", "lowest rated",
-        "top ", "bottom ",
-        "under $", "over $",
-        "less than", "more than",
-        "most reviews", "least reviews",
-        "count", "how many",
-        "sorted by", "sort by",
-        "rating", "reviews"
-    ]
-
-    followup_cues = [
-        "what about", "how about", "then", "and", "those", "ones",
-        "same for", "same with", "what about those"
-    ]
-
-    comparative_followup_cues = [
-        "cheaper", "more expensive", "highest rated", "lowest rated",
-        "top", "best priced", "under", "over"
-    ]
-
-    is_followup = any(cue in q for cue in followup_cues)
-    mentions_category = any(cat in q for cat in category_words)
-    history_has_sql_intent = any(cue in h for cue in sql_cues)
-    question_has_sql_intent = any(cue in q for cue in sql_cues)
-    followup_keeps_structure = any(cue in q for cue in comparative_followup_cues)
-
-    if (is_followup and mentions_category and history_has_sql_intent) or followup_keeps_structure:
-        route = "SQL"
+    mentions_category = _contains_any(q, CATEGORY_WORDS)
+    history_has_sql_intent = _contains_any(h, SQL_CUES)
+    question_has_sql_intent = _contains_any(q, SQL_CUES)
+    is_followup = _contains_any(q, FOLLOWUP_CUES)
+    followup_keeps_structure = _contains_any(q, COMPARATIVE_FOLLOWUP_CUES)
 
     if mentions_category and question_has_sql_intent:
+        route = "SQL"
+
+    if (is_followup and mentions_category and history_has_sql_intent) or followup_keeps_structure:
         route = "SQL"
 
     return {

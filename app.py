@@ -1,12 +1,10 @@
-import os
-import sys
 import html
+import os
 import re
+import sys
 
-import requests
 import streamlit as st
 from dotenv import load_dotenv
-
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -48,92 +46,8 @@ def format_chat_history(messages):
     lines = []
     for msg in messages:
         role = "User" if msg["role"] == "user" else "Assistant"
-        content = msg["content"]
-        lines.append(f"{role}: {content}")
+        lines.append(f"{role}: {msg['content']}")
     return "\n".join(lines)
-
-
-kb_ready = ensure_knowledge_base()
-
-graph = None
-graph_import_error = None
-
-if kb_ready:
-    try:
-        from agent.graph import graph
-    except Exception as e:
-        graph_import_error = str(e)
-else:
-    graph_import_error = "Knowledge base could not be built."
-
-st.markdown("""
-<style>
-#MainMenu {visibility: hidden;}
-header {visibility: hidden;}
-footer {visibility: hidden;}
-
-.block-container {
-    padding-top: 1rem;
-    padding-bottom: 2rem;
-}
-
-.chat-shell {
-    background: #ffffff;
-    border: 1px solid #ececec;
-    border-radius: 18px;
-    padding: 1rem;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.04);
-}
-
-.chat-card {
-    border-radius: 18px;
-    padding: 14px 16px;
-    margin-bottom: 12px;
-    line-height: 1.6;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-}
-
-.user-card {
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-}
-
-.assistant-card {
-    background: #fff8f1;
-    border: 1px solid #fde7d3;
-}
-
-.badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 0.8rem;
-    margin-right: 6px;
-    margin-top: 6px;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
-    color: #374151;
-}
-
-.side-card {
-    background: #ffffff;
-    border: 1px solid #ececec;
-    border-radius: 16px;
-    padding: 1rem;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.04);
-    margin-bottom: 1rem;
-}
-
-.stChatInputContainer {
-    border-top: none !important;
-    padding-top: 0.6rem;
-}
-
-div.stButton > button {
-    border-radius: 12px;
-}
-</style>
-""", unsafe_allow_html=True)
 
 
 def build_workflow_graph(selected_route=None, rejected=False):
@@ -293,11 +207,10 @@ def clean_assistant_answer(answer: str) -> str:
 
     text = str(answer).strip()
     text = text.replace("**", "")
-    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
-    text = re.sub(r'\[([^\]]+)\]\((.*?)\)', r'\1', text)
+    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
+    text = re.sub(r"\[([^\]]+)\]\((.*?)\)", r"\1", text)
 
     cleaned_lines = []
-    skip_description_block = False
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -309,10 +222,6 @@ def clean_assistant_answer(answer: str) -> str:
             continue
 
         if re.match(r"^-?\s*Description\s*:", stripped, re.IGNORECASE):
-            skip_description_block = True
-            continue
-
-        if skip_description_block:
             continue
 
         cleaned_lines.append(line)
@@ -322,7 +231,7 @@ def clean_assistant_answer(answer: str) -> str:
 
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if paragraphs:
-        return paragraphs[0]
+        return "\n\n".join(paragraphs[:2])
 
     return text
 
@@ -330,21 +239,23 @@ def clean_assistant_answer(answer: str) -> str:
 def normalize_price(price):
     if isinstance(price, (int, float)):
         return f"${price:.2f}"
+
     if price not in [None, "", "N/A"]:
         price = str(price).strip()
         return price if price.startswith("$") else f"${price}"
+
     return "N/A"
 
 
-def render_product_cards(retrieved_docs):
-    if not retrieved_docs:
+def render_product_cards(products):
+    if not products:
         return
 
     st.markdown("##### Suggested products")
     cols = st.columns(2)
 
-    for i, doc in enumerate(retrieved_docs[:6]):
-        data = doc.metadata if hasattr(doc, "metadata") else doc
+    for i, product in enumerate(products):
+        data = product.metadata if hasattr(product, "metadata") else product
 
         name = data.get("name", "Unknown")
         price = data.get("price")
@@ -355,9 +266,8 @@ def render_product_cards(retrieved_docs):
             or data.get("stars")
             or "N/A"
         )
-
-        review_count = (
-            data.get("review_count")
+        review = (
+            data.get("review")
             or data.get("reviews")
             or data.get("review_cnt")
             or data.get("num_reviews")
@@ -366,7 +276,6 @@ def render_product_cards(retrieved_docs):
             or data.get("total_reviews")
             or "N/A"
         )
-
         url = data.get("url", "#")
         image_url = (
             data.get("image_url")
@@ -393,7 +302,7 @@ def render_product_cards(retrieved_docs):
                 st.write(f"**Price:** {price_text}")
                 st.write(f"**Category:** {category}")
                 st.write(f"**Rating:** {rating}")
-                st.write(f"**Reviews:** {review_count}")
+                st.write(f"**Reviews:** {review}")
 
                 if image_url:
                     try:
@@ -422,6 +331,76 @@ def render_product_cards(retrieved_docs):
                         st.markdown(f"[View product]({url})")
 
 
+st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 2rem;
+}
+
+.chat-shell {
+    background: #ffffff;
+    border: 1px solid #ececec;
+    border-radius: 18px;
+    padding: 1rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.04);
+}
+
+.chat-card {
+    border-radius: 18px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    line-height: 1.6;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+}
+
+.user-card {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+}
+
+.assistant-card {
+    background: #fff8f1;
+    border: 1px solid #fde7d3;
+}
+
+.side-card {
+    background: #ffffff;
+    border: 1px solid #ececec;
+    border-radius: 16px;
+    padding: 1rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.04);
+    margin-bottom: 1rem;
+}
+
+.stChatInputContainer {
+    border-top: none !important;
+    padding-top: 0.6rem;
+}
+
+div.stButton > button {
+    border-radius: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+kb_ready = ensure_knowledge_base()
+
+graph = None
+graph_import_error = None
+
+if kb_ready:
+    try:
+        from agent.graph import graph
+    except Exception as e:
+        graph_import_error = str(e)
+else:
+    graph_import_error = "Knowledge base could not be built."
+
 if graph_import_error:
     st.error("Could not load chatbot agent.")
     st.code(graph_import_error)
@@ -437,9 +416,6 @@ with left_col:
     if "last_result" not in st.session_state:
         st.session_state.last_result = None
 
-    if "pending_query" not in st.session_state:
-        st.session_state.pending_query = None
-
     st.markdown('<div class="chat-shell">', unsafe_allow_html=True)
 
     for msg in st.session_state.messages:
@@ -449,10 +425,6 @@ with left_col:
                 render_product_cards(msg["products"])
 
     user_query = st.chat_input("Ask about King Arthur Baking mixes...")
-
-    if not user_query and st.session_state.pending_query:
-        user_query = st.session_state.pending_query
-        st.session_state.pending_query = None
 
     if user_query:
         previous_messages = st.session_state.messages.copy()
@@ -471,9 +443,14 @@ with left_col:
                 else:
                     try:
                         chat_history_text = format_chat_history(previous_messages)
+                        prev_docs = []
+                        if st.session_state.get("last_result"):
+                            prev_docs = st.session_state.last_result.get("retrieved_docs", []) or []
+
                         result = graph.invoke({
                             "user_query": user_query,
-                            "chat_history": chat_history_text
+                            "chat_history": chat_history_text,
+                            "retrieved_docs": prev_docs
                         })
                     except Exception as e:
                         result = {
@@ -487,13 +464,12 @@ with left_col:
                     "Sorry, I could not generate an answer."
                 )
                 retrieved_docs = result.get("retrieved_docs", [])
-
                 final_answer = clean_assistant_answer(raw_final_answer)
 
                 if retrieved_docs and (not final_answer or final_answer.lower().startswith("error:")):
                     product_names = []
-                    for doc in retrieved_docs[:3]:
-                        data = doc.metadata if hasattr(doc, "metadata") else doc
+                    for product in retrieved_docs[:3]:
+                        data = product.metadata if hasattr(product, "metadata") else product
                         name = data.get("name")
                         if name:
                             product_names.append(name)
@@ -520,13 +496,13 @@ with left_col:
             "products": retrieved_docs
         })
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with right_col:
     st.markdown('<div class="side-card">', unsafe_allow_html=True)
     st.subheader("Workflow Graph")
-    result = st.session_state.get("last_result", None)
 
+    result = st.session_state.get("last_result", None)
     if result:
         route = result.get("route")
         out_of_scope = result.get("out_of_scope", False)
@@ -535,6 +511,6 @@ with right_col:
     else:
         st.graphviz_chart(build_workflow_graph())
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 st.divider()
